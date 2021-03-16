@@ -1,0 +1,141 @@
+---
+title: "Machine Learning: Predicting O-Ring Failure"
+author: "Nancy Tran"
+date: "January 29, 2020"
+output:
+  html_document:
+    number_sections: no
+    toc: yes
+    toc_depth: 2
+  word_document:
+    toc: yes
+    toc_depth: '2'
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(caret)
+library(gradDescent)
+library(knitr)
+library(tidyr)
+library(kableExtra)
+```
+
+# Why gradient descent?
+Gradient descent techniques allow us to train a logistic regression model that will be able to maximize the conditional data likelihood. This likelihood is understood to be the probability of the output values in the training data, conditioned with their corresponding input variables. Essentially, minimizing a model’s loss function will in turn increase the logistic model’s predictive ability. Therefore, the utilization of batch gradient descent will allow us to automate the iterative learning process of determining optimal parameters for the logistic regression model.
+
+# Data Preparation
+
+
+## Normalizing launch temperatures 
+```{r echo=T}
+# Normalization of Temp column
+data<-read.csv(file="ORing.csv",header=T)
+df<-data[c('Temp')]
+
+# Step 1: Calculate the Mean of the Temp column
+df_mean <- apply(df,2,mean)
+
+# Step 2: Calculate Standard Deviation of the Temp column
+df_sd <- apply(df,2,sd)
+
+# Step 3: Inner sweep calculates (x-mean)  
+# Step 4: Outter sweep takes the (x-mean) and divides by the sd, ((x-mean)/sd)
+norm_df <- sweep(sweep(df, 2, df_mean), 2, df_sd, "/")
+
+# Displaying the head of normalized temps table to get an idea of what is being stored
+head(norm_df) %>%
+  kable(format = "html") %>%
+  kable_styling(font = 10, "bordered", full_width = F)
+```
+<br>
+
+# Creating a logistic regression model using the gradient decent technique 
+```{r echo=T}
+# cbinding a column of 1's with the normalized temps
+new_df<-t(cbind(1,norm_df[1])) # this is a (2 x 24), (1's, normalized temps)
+
+w_0=rnorm(1, mean=0, sd=1)     # Randomly selecting a value between 0 and 1 for w0 inside w vector
+w_1=rnorm(1, mean=0, sd=1)     # Randomly selecting a value between 0 and 1 for w1 inside w vector
+w_current = matrix(c(w_0,w_1), nrow = 2, byrow = T)   # initial w vector is a (2 x 1) matrix
+learning_rate = 0.01                                  # small step sizes
+precision = 0.000001  # set the distance of consecutive w vectors to a very small value
+i = 0                 # initializing the number of iterations
+w_difference = 1      # initializing the difference between previous and current w values for the while statement
+ws<-data.frame()      # initializing an empty dataframe to store iteration counts and gradient descent values
+t_df<-data.frame()    # will be a (2 x 24) dataframe that stores the product of ((h(x)-y)*x)
+
+while (w_difference > precision){
+  i = i+1              # iterations are incremented by 1 each time 
+  w_prev = w_current   # allowing the previous x value to be updated as the intial x
+  h_of_x <- apply(new_df, 2, function(x) 1/(1 + exp(-((t(w_current)%*%x)))))   # h(x) (24x1)
+  sum_1 <- (h_of_x) - data[2]   # (h(x) - y_i), ( h(x)-Failure label), vector (24x1)
+  
+  # inner while loop calculates ((h(x)-y)*x)
+  j=1                           # iterating through each of the 24 entries
+  while (j<25){
+    t <- sum_1[j,]*new_df[,j]   # h(x)-Failure label) 24 rows * 24 rows (multiplied element wise) = produces(2x1)
+    t_df[1,j] = t[1]
+    t_df[2,j] = t[2]
+    j = j+1
+  }                             # t_df is a (2x24) dataframe and it contains the ((h(x)-y)*x)
+  
+  t_rowsum <- rowSums(t_df)                     # summing the rows of t_df gives a (2x1), Sigma(((h(x)-y)*x))
+  w_current = w_prev - learning_rate * t_rowsum # Gradient equation: y = w_0 - LR * h'(w_0), ((2x1) - constant * (2x1)) = produces a (2x1)
+  w_difference = norm(w_current-w_prev, '2')    # distance between previous and current w vectors, uses 2 norm
+  
+  # updating the empty ws data frame with num of iterations and corresponding gradient descent values
+   ws[i,1] <- i             # 1st column: number of iterations
+   ws[i,2] <- w_current[1]  # 2nd column: w_0, gradient descent value
+   ws[i,3] <- w_current[2]  # 3rd column: w_1, gradient descent value
+}
+
+# Renaming the columns of the ws dataframe
+colnames(ws) <- c("Iterations","w_0","w_1")
+ 
+# Displaying the head of the ws table so we can see what is stored inside
+head(ws) %>%
+  kable(format = "html") %>%
+  add_header_above(c("Iterations & Gradient Descent Value" = 3))%>%
+  kable_styling(font = 12, "bordered", full_width = F)
+
+tail(ws$w_0, n=1)  # value that w_0 converges to
+tail(ws$w_1, n=1)  # value that w_1 converges to
+
+```
+Logistic Regression Model Equation: $Failure = \frac{1}{1 + e^{-(-1.102787 + (-1.263882 * Temp))}} =  \frac{1}{1 + e^{(1.102787 + (1.263882 * Temp))}}$
+
+
+<br>
+
+## Plotting the logistic model
+```{r echo=T}
+# Logistic Model Equation
+failure_model <- function(x){1/(1+(exp(-(-1.102787+(-1.263882*x)))))}
+
+# Probablility predictions using normalized temps
+prediction<-failure_model(norm_df$Temp)
+#prediction
+
+plot(data$Temp, data$Failure, ylim=c(0,1), xlab="Tempurature(Fahrenheit)",ylab="Failure", main="Temp vs. Failure", col="red", pch=1)
+lines(data$Temp, prediction, lwd=5,col="turquoise", lty=1)
+legend("right", legend=paste(rep(c("Temperature","Sigmoid"))), col=c("red", "turquoise"),pch=1,lty=c(0,1),cex=0.8)
+```
+<br>
+
+## Predicting the probability of O-ring failure based on the temperature when the Challenger was launched.
+The actual temperature during the Challenger's launch time was 31 degrees Fahrenheit.
+```{r echo=T}
+# Normalize 31 first and plug in the normalized temp into the failure model function
+
+# function to normalize the provided temp with the original df's mean and sd
+normalizing_temp = function(x){(x-df_mean)/df_sd}
+
+prediction_temp = 31                  # Given temp
+p = normalizing_temp(prediction_temp) # normalizing the inputted temp
+
+failure_model(p)        # Plugging in the normalized temp into the logistic model equation that was made above
+```
+According to the logistic model, the probability of O-ring failure at the Challenger lauch temperature of 31 degrees Fahrenheit is 0.9961822. The model does not determine O-ring failure; however, the model does predict the probablity of O-ring failure. Given that the probability is relatively close to 1, there is a high likelihood of failure. Therefore, there should have been a hold on the Challenger's launch.
+
+
